@@ -16,6 +16,7 @@ public class ParseOther extends PlaceholderExpansion {
     private final Map<UUID, String> uuidCache = new ConcurrentHashMap<>();
     private final ScheduledExecutorService cacheCleaner = Executors.newScheduledThreadPool(1);
     private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{3,16}$");
+    private static final char COLOR_CHAR = (char) 0xA7; // legacy section sign (§)
 
     public ParseOther() {
         // Reduce cache lifetime to prevent outdated player data issues
@@ -63,7 +64,7 @@ public class ParseOther extends PlaceholderExpansion {
         String user = unsafe ? PlaceholderAPI.setPlaceholders(p, "%" + strings[0] + "%") : strings[0];
 
         // Strip colors and invalid characters
-        user = stripInvalid(ChatColor.stripColor(user), false);
+        user = sanitize(user, false);
 
         if (user.isBlank() || user.equalsIgnoreCase("none") || user.contains("%") || !USERNAME_PATTERN.matcher(user).matches()) {
             return "0";
@@ -79,7 +80,7 @@ public class ParseOther extends PlaceholderExpansion {
         try {
             String placeholderResult = PlaceholderAPI.setPlaceholders(player, "%" + strings[1] + "%");
 
-            placeholderResult = stripInvalid(ChatColor.stripColor(placeholderResult), true);
+            placeholderResult = sanitize(placeholderResult, true);
 
             // If unresolved placeholders or empty results, return "0"
             if (placeholderResult == null || placeholderResult.trim().isEmpty() || placeholderResult.contains("{") || placeholderResult.contains("}")) {
@@ -106,9 +107,10 @@ public class ParseOther extends PlaceholderExpansion {
         return -1;
     }
 
-    // Removes disallowed characters without compiling a regex per call. Returns the
-    // input unchanged (no allocation) when every character is already valid.
-    private static String stripInvalid(String input, boolean allowResultChars) {
+    // Strips legacy color codes (section sign + code char) AND disallowed characters in
+    // a single pass. Returns the input unchanged (no allocation) when it is already
+    // clean. Replaces ChatColor.stripColor (a Matcher) plus a regex replaceAll per call.
+    private static String sanitize(String input, boolean allowResultChars) {
         if (input == null) {
             return null;
         }
@@ -116,6 +118,17 @@ public class ParseOther extends PlaceholderExpansion {
         StringBuilder sb = null;
         for (int i = 0; i < len; i++) {
             char c = input.charAt(i);
+
+            // Color code: drop the section sign and the following code char together.
+            if (c == COLOR_CHAR && i + 1 < len && isColorCode(input.charAt(i + 1))) {
+                if (sb == null) {
+                    sb = new StringBuilder(len);
+                    sb.append(input, 0, i);
+                }
+                i++; // also skip the code char
+                continue;
+            }
+
             boolean valid = allowResultChars ? isValidResultChar(c) : isValidUserChar(c);
             if (valid) {
                 if (sb != null) {
@@ -127,6 +140,14 @@ public class ParseOther extends PlaceholderExpansion {
             }
         }
         return sb == null ? input : sb.toString();
+    }
+
+    // Legacy color/format code characters (matches ChatColor.stripColor: 0-9 A-F K-O R X).
+    private static boolean isColorCode(char c) {
+        return (c >= '0' && c <= '9')
+            || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+            || (c >= 'k' && c <= 'o') || (c >= 'K' && c <= 'O')
+            || c == 'r' || c == 'R' || c == 'x' || c == 'X';
     }
 
     private static boolean isValidUserChar(char c) {
