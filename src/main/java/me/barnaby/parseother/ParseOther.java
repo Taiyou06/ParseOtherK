@@ -16,7 +16,6 @@ public class ParseOther extends PlaceholderExpansion {
     private final Map<UUID, String> uuidCache = new ConcurrentHashMap<>();
     private final ScheduledExecutorService cacheCleaner = Executors.newScheduledThreadPool(1);
     private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{3,16}$");
-    private static final Pattern SUFFIX_SPLIT = Pattern.compile("(?<!\\\\)\\}_");
 
     public ParseOther() {
         // Reduce cache lifetime to prevent outdated player data issues
@@ -50,13 +49,16 @@ public class ParseOther extends PlaceholderExpansion {
             unsafe = true;
         }
 
-        String[] strings = SUFFIX_SPLIT.split(s, 2);
-        if (strings.length < 2 || strings[1].length() < 2) {
+        int sep = indexOfUnescapedSep(s);
+        // Need a separator (not at index 0) and a placeholder part of at least 2 chars.
+        if (sep < 1 || s.length() - sep - 2 < 2) {
             return "0";
         }
 
-        strings[0] = strings[0].substring(1).replace("\\}_", "}_");
-        strings[1] = strings[1].substring(1, strings[1].length() - 1);
+        String[] strings = {
+            s.substring(1, sep).replace("\\}_", "}_"),
+            s.substring(sep + 3, s.length() - 1)
+        };
 
         String user = unsafe ? PlaceholderAPI.setPlaceholders(p, "%" + strings[0] + "%") : strings[0];
 
@@ -88,6 +90,20 @@ public class ParseOther extends PlaceholderExpansion {
         } catch (Exception e) {
             return "0"; // If any error occurs, return "0"
         }
+    }
+
+    // Index of the '}' in the first "}_" not escaped by a preceding backslash, or -1.
+    // Replaces a lookbehind regex (and its Matcher/backtracking) with a plain scan.
+    private static int indexOfUnescapedSep(String s) {
+        int from = 0;
+        int i;
+        while ((i = s.indexOf("}_", from)) >= 0) {
+            if (i == 0 || s.charAt(i - 1) != '\\') {
+                return i;
+            }
+            from = i + 1;
+        }
+        return -1;
     }
 
     // Removes disallowed characters without compiling a regex per call. Returns the
