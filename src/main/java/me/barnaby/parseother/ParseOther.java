@@ -16,6 +16,7 @@ public class ParseOther extends PlaceholderExpansion {
     private final Map<UUID, String> uuidCache = new ConcurrentHashMap<>();
     private final ScheduledExecutorService cacheCleaner = Executors.newScheduledThreadPool(1);
     private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{3,16}$");
+    private static final Pattern SUFFIX_SPLIT = Pattern.compile("(?<!\\\\)\\}_");
 
     public ParseOther() {
         // Reduce cache lifetime to prevent outdated player data issues
@@ -49,18 +50,18 @@ public class ParseOther extends PlaceholderExpansion {
             unsafe = true;
         }
 
-        String[] strings = s.split("(?<!\\\\)\\}_", 2);
+        String[] strings = SUFFIX_SPLIT.split(s, 2);
         if (strings.length < 2 || strings[1].length() < 2) {
             return "0";
         }
 
-        strings[0] = strings[0].substring(1).replaceAll("\\\\}_", "}_");
+        strings[0] = strings[0].substring(1).replace("\\}_", "}_");
         strings[1] = strings[1].substring(1, strings[1].length() - 1);
 
         String user = unsafe ? PlaceholderAPI.setPlaceholders(p, "%" + strings[0] + "%") : strings[0];
 
         // Strip colors and invalid characters
-        user = ChatColor.stripColor(user).replaceAll("[^a-zA-Z0-9_]", "");
+        user = stripInvalid(ChatColor.stripColor(user), false);
 
         if (user.isBlank() || user.equalsIgnoreCase("none") || user.contains("%") || !USERNAME_PATTERN.matcher(user).matches()) {
             return "0";
@@ -76,7 +77,7 @@ public class ParseOther extends PlaceholderExpansion {
         try {
             String placeholderResult = PlaceholderAPI.setPlaceholders(player, "%" + strings[1] + "%");
 
-            placeholderResult = ChatColor.stripColor(placeholderResult).replaceAll("[^a-zA-Z0-9 _.,:;!?()-]", "");
+            placeholderResult = stripInvalid(ChatColor.stripColor(placeholderResult), true);
 
             // If unresolved placeholders or empty results, return "0"
             if (placeholderResult == null || placeholderResult.trim().isEmpty() || placeholderResult.contains("{") || placeholderResult.contains("}")) {
@@ -86,6 +87,46 @@ public class ParseOther extends PlaceholderExpansion {
             return ChatColor.translateAlternateColorCodes('&', placeholderResult);
         } catch (Exception e) {
             return "0"; // If any error occurs, return "0"
+        }
+    }
+
+    // Removes disallowed characters without compiling a regex per call. Returns the
+    // input unchanged (no allocation) when every character is already valid.
+    private static String stripInvalid(String input, boolean allowResultChars) {
+        if (input == null) {
+            return null;
+        }
+        int len = input.length();
+        StringBuilder sb = null;
+        for (int i = 0; i < len; i++) {
+            char c = input.charAt(i);
+            boolean valid = allowResultChars ? isValidResultChar(c) : isValidUserChar(c);
+            if (valid) {
+                if (sb != null) {
+                    sb.append(c);
+                }
+            } else if (sb == null) {
+                sb = new StringBuilder(len);
+                sb.append(input, 0, i);
+            }
+        }
+        return sb == null ? input : sb.toString();
+    }
+
+    private static boolean isValidUserChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    }
+
+    private static boolean isValidResultChar(char c) {
+        if (isValidUserChar(c)) {
+            return true;
+        }
+        switch (c) {
+            case ' ': case '.': case ',': case ':': case ';':
+            case '!': case '?': case '(': case ')': case '-':
+                return true;
+            default:
+                return false;
         }
     }
 
